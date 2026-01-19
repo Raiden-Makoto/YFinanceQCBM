@@ -6,14 +6,13 @@ import time
 from datetime import datetime
 
 # --- CONFIGURATION ---
-script_dir = os.path.dirname(os.path.abspath(__file__))
-data_dir = os.path.join(script_dir, "data")
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+data_dir = os.path.join(project_root, "data")
 if not os.path.exists(data_dir):
     os.makedirs(data_dir)
-
 TICKER = "VFV.TO"
 CACHE_FILE = os.path.join(data_dir, "vfv_market_data.csv")
-CACHE_DURATION_SECONDS = 900  # 15 Minutes
+CACHE_DURATION_SECONDS = 900  # 15 minutes
 
 def get_vfv_data():
     """
