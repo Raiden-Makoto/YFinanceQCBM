@@ -1,12 +1,13 @@
-import torch # type: ignore
-import torch.nn as nn # type: ignore    
-import torch.optim as optim # type: ignore
-from torch.utils.data import DataLoader # type: ignore
-from tqdm import tqdm # type: ignore
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader
+from tqdm import tqdm
+import matplotlib.pyplot as plt
 import os
 import sys
 
-# Setup project paths
+# Setup paths
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(project_root)
 
@@ -14,76 +15,96 @@ from data.dataset import VFVDataset
 from model.generator import QuantumGenerator
 from model.discriminator import Discriminator
 
-# --- 1. DATA LOADING ---
-CACHE_FILE = os.path.join(project_root, "data", "vfv_market_data.csv")
-dataset = VFVDataset(CACHE_FILE)
-dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+# --- CONFIG (WGAN Standard) ---
+EPOCHS = 50
+BATCH_SIZE = 64  # Larger batch size helps WGAN stability
+LR = 0.00005     # WGAN needs very small learning rates
+CLIP_VALUE = 0.01 # The "Speed Limit" for Discriminator weights
+N_CRITIC = 5     # Train Discriminator 5 times for every 1 Generator step
 
-# --- 2. INITIALIZATION ---
+CSV_PATH = os.path.join(project_root, "data", "vfv_market_data.csv")
+
+# --- SETUP ---
+dataset = VFVDataset(CSV_PATH)
+dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
+
 gen = QuantumGenerator()
 disc = Discriminator()
 
-# Adversarial learning rates
-optimizer_G = optim.Adam(gen.parameters(), lr=0.01)
-optimizer_D = optim.Adam(disc.parameters(), lr=0.005)
-criterion = nn.BCELoss()
+# [CRITICAL FIX] Remove Sigmoid from Discriminator for WGAN
+# WGAN needs unbounded output (Score), not probability (0-1)
+if isinstance(disc.model[-1], nn.Sigmoid):
+    print("Adjusting Discriminator for WGAN (Removing Sigmoid)...")
+    disc.model[-1] = nn.Identity()
 
-# --- 3. TRAINING LOOP ---
-EPOCHS = 50
+# Use RMSprop for WGAN (Standard practice over Adam)
+opt_G = optim.RMSprop(gen.parameters(), lr=LR)
+opt_D = optim.RMSprop(disc.parameters(), lr=LR)
+
+d_losses = []
+g_losses = []
+
+print("Starting Wasserstein GAN Training...")
 
 for epoch in range(EPOCHS):
-    # Setup progress bar
-    pbar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{EPOCHS}", leave=True)
+    pbar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{EPOCHS}")
     
-    for real_windows in pbar:
-        # A. Prepare Data (Force Float32 for PyTorch-Quantum compatibility)
+    for i, real_windows in enumerate(pbar):
         real_windows = real_windows.float()
-        batch_size = real_windows.size(0)
+        batch_sz = real_windows.size(0)
         
-        real_labels = torch.ones(batch_size, 1).float()
-        fake_labels = torch.zeros(batch_size, 1).float()
-
-        # ---------------------
-        #  B. TRAIN DISCRIMINATOR
-        # ---------------------
-        optimizer_D.zero_grad()
+        # ==================================
+        #  1. TRAIN DISCRIMINATOR (The Critic)
+        # ==================================
+        opt_D.zero_grad()
         
-        # Real pass
-        outputs_real = disc(real_windows)
-        d_loss_real = criterion(outputs_real, real_labels)
+        # Real Data
+        real_loss = -torch.mean(disc(real_windows)) # Maximize score for real
         
-        # Fake pass: PennyLane returns float64, so we cast to float() immediately
-        fake_windows = torch.cat([gen().float() for _ in range(batch_size)])
+        # Fake Data
+        fake_windows = gen(batch_sz).detach()
+        fake_loss = torch.mean(disc(fake_windows)) # Minimize score for fake
         
-        # Detach fake windows so we only update the Discriminator here
-        outputs_fake = disc(fake_windows.detach())
-        d_loss_fake = criterion(outputs_fake, fake_labels)
-        
-        d_loss = d_loss_real + d_loss_fake
+        d_loss = real_loss + fake_loss
         d_loss.backward()
-        optimizer_D.step()
+        opt_D.step()
 
-        # -----------------
-        #  C. TRAIN GENERATOR
-        # -----------------
-        optimizer_G.zero_grad()
-        
-        # Generator wants Discriminator to think fake windows are REAL (1)
-        outputs_g = disc(fake_windows)
-        g_loss = criterion(outputs_g, real_labels) 
-        
-        g_loss.backward()
-        optimizer_G.step()
+        # [CRITICAL FIX] Clip weights to enforce 1-Lipschitz continuity
+        for p in disc.parameters():
+            p.data.clamp_(-CLIP_VALUE, CLIP_VALUE)
 
-        # -----------------
-        #  D. UPDATE PROGRESS
-        # -----------------
-        # Use set_postfix to display losses without printing new lines
-        pbar.set_postfix({
-            'D_loss': f"{d_loss.item():.4f}", 
-            'G_loss': f"{g_loss.item():.4f}"
-        })
+        # ==================================
+        #  2. TRAIN GENERATOR
+        # ==================================
+        # Only train G every N_CRITIC steps (gives D time to estimate distance)
+        if i % N_CRITIC == 0:
+            opt_G.zero_grad()
+            
+            # Generate fresh fakes
+            gen_windows = gen(batch_sz)
+            
+            # Generator wants to maximize the Critic's score for its fakes
+            # (In WGAN, this means minimizing -D(G(z)))
+            g_loss = -torch.mean(disc(gen_windows))
+            
+            g_loss.backward()
+            opt_G.step()
+            
+            # Track losses
+            g_losses.append(g_loss.item())
+            d_losses.append(d_loss.item())
+            
+            pbar.set_postfix(D_WDist=f"{-d_loss.item():.4f}", G_Score=f"{-g_loss.item():.4f}")
 
-# Save the trained generator weights for the decision engine
-torch.save(gen.state_dict(), "vfv_qgan_weights.pt")
-print("\nTraining Complete.")
+# --- PLOTTING ---
+plt.figure(figsize=(10, 5))
+plt.plot(d_losses, label="Critic Loss (Wasserstein Dist)", color='red', alpha=0.5)
+plt.plot(g_losses, label="Generator Score", color='blue', alpha=0.5)
+plt.title("WGAN Training: No Spikes, Just Convergence")
+plt.xlabel("Steps")
+plt.ylabel("Wasserstein Estimate")
+plt.legend()
+plt.grid(True)
+plt.savefig("wgan_training.png")
+print("WGAN Training Complete. Plot saved to wgan_training.png")
+torch.save(gen.state_dict(), "vfv_wgan_weights.pt")
