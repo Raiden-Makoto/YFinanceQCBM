@@ -1,7 +1,7 @@
-from ansatz import quantum_circuit
+from .ansatz import quantum_circuit # type: ignore
 import torch # type: ignore
 import torch.nn as nn # type: ignore
-from ansatz import N_LAYERS, N_QUBITS
+from .ansatz import N_LAYERS, N_QUBITS
 
 class QuantumGenerator(nn.Module):
     def __init__(self):

@@ -1,10 +1,11 @@
 import pandas as pd # type: ignore
+import numpy as np # type: ignore
 import torch # type: ignore
 from torch.utils.data import Dataset # type: ignore
 from sklearn.preprocessing import StandardScaler # type: ignore
  
 class VFVDataset(Dataset):
-    def __init__(self, csv_path: str, window_size: int = 15):
+    def __init__(self, csv_path, window_size=15):
         # 1. Load CSV, skipping the 'Ticker' and empty 'Datetime' rows
         # Based on your file, we skip rows 1 and 2 (0-indexed)
         df = pd.read_csv(csv_path, skiprows=[1, 2])
@@ -27,7 +28,7 @@ class VFVDataset(Dataset):
         for i in range(len(returns_scaled) - window_size):
             self.windows.append(returns_scaled[i : i + window_size])
             
-        self.windows = torch.tensor(self.windows, dtype=torch.float32)
+        self.windows = torch.tensor(np.array(self.windows), dtype=torch.float32)
         print(f"Dataset Loaded: {len(self.windows)} windows of {window_size} minutes.")
 
     def __len__(self):
