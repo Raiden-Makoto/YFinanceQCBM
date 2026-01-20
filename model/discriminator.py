@@ -1,8 +1,8 @@
 import torch # type: ignore
 import torch.nn as nn # type: ignore
 
-HIDDEN_SIZE = 64
-DROPOUT_RATE = 0.2
+HIDDEN_SIZE = 64 // 2
+DROPOUT_RATE = 0.3
 LEAKY_SLOPE = 0.2
 
 class Discriminator(nn.Module):
@@ -13,11 +13,7 @@ class Discriminator(nn.Module):
             nn.Linear(input_size, HIDDEN_SIZE),
             nn.LeakyReLU(LEAKY_SLOPE),
             nn.Dropout(DROPOUT_RATE),
-            nn.Linear(HIDDEN_SIZE, HIDDEN_SIZE // 2),
-            nn.LeakyReLU(LEAKY_SLOPE),
-            nn.Dropout(DROPOUT_RATE),
-            nn.Linear(HIDDEN_SIZE // 2, 1),
-            nn.Sigmoid()
+            nn.Linear(HIDDEN_SIZE, 1),
         )
 
     def forward(self, x):

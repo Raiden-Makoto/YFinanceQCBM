@@ -15,12 +15,13 @@ from data.dataset import VFVDataset
 from model.generator import QuantumGenerator
 from model.discriminator import Discriminator
 
-# --- CONFIG (WGAN Standard) ---
-EPOCHS = 50
-BATCH_SIZE = 64  # Larger batch size helps WGAN stability
-LR = 0.00005     # WGAN needs very small learning rates
-CLIP_VALUE = 0.01 # The "Speed Limit" for Discriminator weights
-N_CRITIC = 5     # Train Discriminator 5 times for every 1 Generator step
+# --- FINAL CONFIG ---
+EPOCHS = 150           # Increased from 50 to 300 for full convergence
+BATCH_SIZE = 64
+LR_G = 0.0002
+LR_D = 0.00005
+CLIP_VALUE = 0.01
+N_CRITIC = 1 
 
 CSV_PATH = os.path.join(project_root, "data", "vfv_market_data.csv")
 
@@ -30,21 +31,20 @@ dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=
 
 gen = QuantumGenerator()
 disc = Discriminator()
+disc.model[-1] = nn.Identity() # WGAN Mode
 
-# [CRITICAL FIX] Remove Sigmoid from Discriminator for WGAN
-# WGAN needs unbounded output (Score), not probability (0-1)
-if isinstance(disc.model[-1], nn.Sigmoid):
-    print("Adjusting Discriminator for WGAN (Removing Sigmoid)...")
-    disc.model[-1] = nn.Identity()
+opt_G = optim.RMSprop(gen.parameters(), lr=LR_G)
+opt_D = optim.RMSprop(disc.parameters(), lr=LR_D)
 
-# Use RMSprop for WGAN (Standard practice over Adam)
-opt_G = optim.RMSprop(gen.parameters(), lr=LR)
-opt_D = optim.RMSprop(disc.parameters(), lr=LR)
+# [NEW] Learning Rate Schedulers
+# Every 50 epochs, cut the learning rate by 50%.
+# This acts like a "parachute" for the sine wave, forcing it to land smoothly.
+scheduler_G = optim.lr_scheduler.StepLR(opt_G, step_size=25, gamma=0.5)
+scheduler_D = optim.lr_scheduler.StepLR(opt_D, step_size=25, gamma=0.5)
 
-d_losses = []
-g_losses = []
+w_distances = [] 
 
-print("Starting Wasserstein GAN Training...")
+print(f"Starting Long-Run Training ({EPOCHS} Epochs)...")
 
 for epoch in range(EPOCHS):
     pbar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{EPOCHS}")
@@ -53,58 +53,44 @@ for epoch in range(EPOCHS):
         real_windows = real_windows.float()
         batch_sz = real_windows.size(0)
         
-        # ==================================
-        #  1. TRAIN DISCRIMINATOR (The Critic)
-        # ==================================
+        # --- TRAIN CRITIC ---
         opt_D.zero_grad()
-        
-        # Real Data
-        real_loss = -torch.mean(disc(real_windows)) # Maximize score for real
-        
-        # Fake Data
-        fake_windows = gen(batch_sz).detach()
-        fake_loss = torch.mean(disc(fake_windows)) # Minimize score for fake
-        
-        d_loss = real_loss + fake_loss
+        loss_real = -torch.mean(disc(real_windows))
+        loss_fake = torch.mean(disc(gen(batch_sz).detach()))
+        d_loss = loss_real + loss_fake
         d_loss.backward()
         opt_D.step()
 
-        # [CRITICAL FIX] Clip weights to enforce 1-Lipschitz continuity
         for p in disc.parameters():
             p.data.clamp_(-CLIP_VALUE, CLIP_VALUE)
 
-        # ==================================
-        #  2. TRAIN GENERATOR
-        # ==================================
-        # Only train G every N_CRITIC steps (gives D time to estimate distance)
-        if i % N_CRITIC == 0:
-            opt_G.zero_grad()
-            
-            # Generate fresh fakes
-            gen_windows = gen(batch_sz)
-            
-            # Generator wants to maximize the Critic's score for its fakes
-            # (In WGAN, this means minimizing -D(G(z)))
-            g_loss = -torch.mean(disc(gen_windows))
-            
-            g_loss.backward()
-            opt_G.step()
-            
-            # Track losses
-            g_losses.append(g_loss.item())
-            d_losses.append(d_loss.item())
-            
-            pbar.set_postfix(D_WDist=f"{-d_loss.item():.4f}", G_Score=f"{-g_loss.item():.4f}")
+        # --- TRAIN GENERATOR ---
+        opt_G.zero_grad()
+        g_loss = -torch.mean(disc(gen(batch_sz)))
+        g_loss.backward()
+        opt_G.step()
+        
+        # Metric: Wasserstein Distance
+        dist = -d_loss.item() # approximate distance
+        w_distances.append(dist)
+        pbar.set_postfix(Gap=f"{dist:.4f}")
 
-# --- PLOTTING ---
+    # Step the schedulers at the end of the epoch
+    scheduler_G.step()
+    scheduler_D.step()
+
+# --- PLOT THE CONVERGENCE ---
 plt.figure(figsize=(10, 5))
-plt.plot(d_losses, label="Critic Loss (Wasserstein Dist)", color='red', alpha=0.5)
-plt.plot(g_losses, label="Generator Score", color='blue', alpha=0.5)
-plt.title("WGAN Training: No Spikes, Just Convergence")
+plt.plot(w_distances, color='purple', alpha=0.3, label="Raw Gap")
+# Plot a moving average to see the trend clearly
+moving_avg = [sum(w_distances[i:i+100])/100 for i in range(len(w_distances)-100)]
+plt.plot(range(100, len(w_distances)), moving_avg, color='black', linewidth=2, label="Trend (Moving Avg)")
+
+plt.title("Final Convergence: The 'Flatline'")
 plt.xlabel("Steps")
-plt.ylabel("Wasserstein Estimate")
+plt.ylabel("Wasserstein Distance")
 plt.legend()
-plt.grid(True)
-plt.savefig("wgan_training.png")
-print("WGAN Training Complete. Plot saved to wgan_training.png")
-torch.save(gen.state_dict(), "vfv_wgan_weights.pt")
+plt.grid(True, alpha=0.3)
+plt.savefig("wgan_final_convergence.png")
+print("\nTraining Complete. Check wgan_final_convergence.png")
+torch.save(gen.state_dict(), "vfv_wgan_final.pt")
