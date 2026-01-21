@@ -72,6 +72,9 @@ if 'dropping_streak' not in st.session_state:
     st.session_state.dropping_streak = 0
 if 'logs' not in st.session_state:
     st.session_state.logs = []
+if 'log_reset_at' not in st.session_state:
+    # Used to clear the log every hour (ET)
+    st.session_state.log_reset_at = datetime.now(ZoneInfo("America/New_York"))
 
 # --- 3. VISUALIZATION HELPER ---
 def plot_quantum_cloud(real_window, futures):
@@ -139,7 +142,7 @@ def plot_quantum_cloud(real_window, futures):
 def main():
     # Header
     c1, c2 = st.columns([4, 1])
-    with c1: st.title("⚛️ QUANTUM SENTINEL | VFV.TO")
+    with c1: st.title("Quantum Market Monitor for VFV.TO")
     with c2: 
         if st.button("Stop Engine"): st.stop()
 
@@ -147,9 +150,11 @@ def main():
 
     # Layout Containers (To hold live updates)
     status_area = st.empty()
-    metrics_area = st.container()
+    metrics_area = st.empty()
     chart_area = st.empty()
     log_area = st.expander("Live Signal Log", expanded=True)
+    with log_area:
+        log_text_area = st.empty()
 
     # --- THE LIVE LOOP ---
     while True:
@@ -209,6 +214,11 @@ def main():
         # Current Eastern Time (handles EST/EDT automatically)
         est_now = datetime.now(ZoneInfo("America/New_York"))
         est_stamp = est_now.strftime("%Y-%m-%d %H:%M:%S %Z")
+
+        # Clear log every hour to prevent unbounded growth
+        if (est_now - st.session_state.log_reset_at).total_seconds() >= 3600:
+            st.session_state.logs = []
+            st.session_state.log_reset_at = est_now
         
         # 1. Status Box
         status_area.markdown(f"""
@@ -219,8 +229,7 @@ def main():
         """, unsafe_allow_html=True)
 
         # 2. Metrics Grid
-        with metrics_area:
-            # We use st.empty() inside columns to overwrite numbers cleanly
+        with metrics_area.container():
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Quantum Trend", f"{trend:.4f}")
             c2.metric("Instant Signal", instant_signal)
@@ -236,9 +245,9 @@ def main():
         log_entry = f"[{ts}] {instant_signal:<8} | Trend: {trend:+.4f} | Score: {critic_score:.4f}"
         st.session_state.logs.insert(0, log_entry)
         if len(st.session_state.logs) > 8: st.session_state.logs.pop()
-        
-        with log_area:
-            st.text("\n".join(st.session_state.logs))
+
+        # Replace log contents (don't stack)
+        log_text_area.text("\n".join(st.session_state.logs))
 
         # Loop delay is handled by sync_market_clock(), but we add a tiny safety sleep
         time.sleep(1)
