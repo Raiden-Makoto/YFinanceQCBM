@@ -1,4 +1,3 @@
-import yfinance as yf
 import pandas as pd
 import numpy as np
 import os
@@ -50,6 +49,10 @@ def get_vfv_data(force_refresh=False):
     # 2. Fetch fresh data
     print(f"--- [{'FORCE' if force_refresh else 'STALE'}] Fetching fresh data for {TICKER}... ---")
     try:
+        # Import here so the monitor can still run off the existing CSV cache
+        # even if `yfinance` isn't installed in the current environment.
+        import yfinance as yf  # type: ignore
+
         # Fetching 5 days to ensure continuity
         data = yf.download(TICKER, period="5d", interval="1m", progress=False)
         
@@ -62,6 +65,13 @@ def get_vfv_data(force_refresh=False):
         print("--- [SUCCESS] Cache updated with fresh data ---")
         return data
 
+    except ModuleNotFoundError as e:
+        print(f"An error occurred while fetching data: {e}")
+        # If yfinance isn't available, fall back to whatever is on disk.
+        if os.path.exists(CACHE_FILE):
+            print("--- [FALLBACK] yfinance missing; using existing cache ---")
+            return pd.read_csv(CACHE_FILE, index_col=0, parse_dates=True)
+        return None
     except Exception as e:
         print(f"An error occurred while fetching data: {e}")
         # Fallback to cache if API fails

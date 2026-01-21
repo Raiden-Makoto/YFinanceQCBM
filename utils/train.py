@@ -32,7 +32,9 @@ dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=
 
 gen = QuantumGenerator()
 disc = Discriminator()
-disc.model[-1] = nn.Identity() # WGAN Mode
+# NOTE:
+# Our `Discriminator` already outputs a single scalar per sample (Linear -> 1).
+# In WGAN you remove a Sigmoid if present; we don't have one, so keep the last Linear.
 
 opt_G = optim.RMSprop(gen.parameters(), lr=LR_G)
 opt_D = optim.RMSprop(disc.parameters(), lr=LR_D)
