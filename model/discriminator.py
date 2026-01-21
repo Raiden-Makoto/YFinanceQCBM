@@ -2,7 +2,7 @@ import torch # type: ignore
 import torch.nn as nn # type: ignore
 
 HIDDEN_SIZE = 64 // 2
-DROPOUT_RATE = 0.3
+DROPOUT_RATE = 0.2
 LEAKY_SLOPE = 0.2
 
 class Discriminator(nn.Module):

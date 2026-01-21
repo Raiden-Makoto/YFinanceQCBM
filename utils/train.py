@@ -6,6 +6,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 import os
 import sys
+import timeit
 
 # Setup paths
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -16,7 +17,7 @@ from model.generator import QuantumGenerator
 from model.discriminator import Discriminator
 
 # --- FINAL CONFIG ---
-EPOCHS = 150           # Increased from 50 to 300 for full convergence
+EPOCHS = 60         
 BATCH_SIZE = 64
 LR_G = 0.0002
 LR_D = 0.00005
@@ -36,15 +37,14 @@ disc.model[-1] = nn.Identity() # WGAN Mode
 opt_G = optim.RMSprop(gen.parameters(), lr=LR_G)
 opt_D = optim.RMSprop(disc.parameters(), lr=LR_D)
 
-# [NEW] Learning Rate Schedulers
-# Every 50 epochs, cut the learning rate by 50%.
 # This acts like a "parachute" for the sine wave, forcing it to land smoothly.
-scheduler_G = optim.lr_scheduler.StepLR(opt_G, step_size=25, gamma=0.5)
-scheduler_D = optim.lr_scheduler.StepLR(opt_D, step_size=25, gamma=0.5)
+scheduler_G = optim.lr_scheduler.StepLR(opt_G, step_size=15, gamma=0.5)
+scheduler_D = optim.lr_scheduler.StepLR(opt_D, step_size=15, gamma=0.5)
 
 w_distances = [] 
 
 print(f"Starting Long-Run Training ({EPOCHS} Epochs)...")
+starttime = timeit.default_timer()
 
 for epoch in range(EPOCHS):
     pbar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{EPOCHS}")
@@ -80,14 +80,34 @@ for epoch in range(EPOCHS):
     scheduler_D.step()
 
 # --- PLOT THE CONVERGENCE ---
-plt.figure(figsize=(10, 5))
-plt.plot(w_distances, color='purple', alpha=0.3, label="Raw Gap")
-# Plot a moving average to see the trend clearly
-moving_avg = [sum(w_distances[i:i+100])/100 for i in range(len(w_distances)-100)]
-plt.plot(range(100, len(w_distances)), moving_avg, color='black', linewidth=2, label="Trend (Moving Avg)")
+print(f"Training complete in {timeit.default_timer() - starttime}s. Generating plot...")
+plt.figure(figsize=(12, 6))
 
-plt.title("Final Convergence: The 'Flatline'")
-plt.xlabel("Steps")
+# 1. Determine Cutoff (Skip first 10% of training to hide the startup spike)
+cutoff = int(len(w_distances) * 0.1) 
+zoomed_data = w_distances[cutoff:]
+zoomed_steps = range(cutoff, len(w_distances))
+
+# 2. Plot Raw Gap (Zoomed)
+plt.plot(zoomed_steps, zoomed_data, color='purple', alpha=0.4, label="Raw Gap")
+
+# 3. Plot Trend Line (Moving Average)
+window = 50
+if len(zoomed_data) > window:
+    # Calculate moving avg on the ZOOMED data only
+    moving_avg = [sum(zoomed_data[i:i+window])/window for i in range(len(zoomed_data)-window)]
+    # Align x-axis
+    plt.plot(range(cutoff+window, len(w_distances)), moving_avg, color='black', linewidth=2, label="Trend")
+
+# 4. Force Y-Axis Focus
+# We set the limits based on the ZOOMED data, ignoring the initial spike
+y_min = min(zoomed_data)
+y_max = max(zoomed_data)
+margin = (y_max - y_min) * 0.2
+plt.ylim(y_min - margin, y_max + margin)
+
+plt.title(f"WGAN Convergence (Zoomed In - Last 90%)")
+plt.xlabel("Training Steps")
 plt.ylabel("Wasserstein Distance")
 plt.legend()
 plt.grid(True, alpha=0.3)
