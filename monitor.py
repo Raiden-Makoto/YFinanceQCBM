@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlit as st 
 import plotly.graph_objects as go
 import torch
 import torch.nn as nn
@@ -7,6 +7,7 @@ import sys
 import os
 import time
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 # --- SETUP PATHS ---
 project_root = os.path.dirname(os.path.abspath(__file__))
@@ -27,7 +28,7 @@ ANOMALY_THRESHOLD = -0.5
 
 # --- PAGE SETUP ---
 st.set_page_config(
-    page_title="Quantum Sentinel",
+    page_title="Quantum Market Monitor for VFV.TO",
     page_icon="⚛️",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -119,7 +120,7 @@ def plot_quantum_cloud(real_window, futures):
     fig.add_trace(go.Scatter(
         x=x_future, y=aligned_mean, 
         mode='lines', 
-        name='Quantum Trend',
+        name='Averaged Quantum Trend (2SD)',
         line=dict(color='#ff00ff', width=3, dash='dot')
     ))
 
@@ -201,16 +202,19 @@ def main():
             
         # Anomaly Override
         if critic_score < ANOMALY_THRESHOLD:
-            final_status = "⚠️ CRASH WARNING (LIQUIDATE)"
+            final_status = "CRASH WARNING (EXIT)"
             box_color = "#ff0000" # Bright Red
 
         # --- E. RENDER UI ---
+        # Current Eastern Time (handles EST/EDT automatically)
+        est_now = datetime.now(ZoneInfo("America/New_York"))
+        est_stamp = est_now.strftime("%Y-%m-%d %H:%M:%S %Z")
         
         # 1. Status Box
         status_area.markdown(f"""
             <div class="status-box" style="background-color: {box_color};">
                 <h1 style="margin:0; color:white;">{final_status}</h1>
-                <p style="margin:0; color:#ddd;">Market Health Score: {critic_score:.4f} &nbsp; | &nbsp; Time: {datetime.now().strftime("%H:%M:%S")}</p>
+                <p style="margin:0; color:#ddd;">Market Health Score: {critic_score:.4f} &nbsp; | &nbsp; Time (ET): {est_stamp}</p>
             </div>
         """, unsafe_allow_html=True)
 
@@ -228,7 +232,7 @@ def main():
         chart_area.plotly_chart(fig, use_container_width=True)
 
         # 4. Logs
-        ts = datetime.now().strftime("%H:%M:%S")
+        ts = est_stamp
         log_entry = f"[{ts}] {instant_signal:<8} | Trend: {trend:+.4f} | Score: {critic_score:.4f}"
         st.session_state.logs.insert(0, log_entry)
         if len(st.session_state.logs) > 8: st.session_state.logs.pop()
